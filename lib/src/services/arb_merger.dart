@@ -3,6 +3,17 @@ import 'dart:io';
 import '../models/arb.dart';
 import '../models/settings/package_settings.dart';
 
+enum MergeBehavior {
+  /// Overwrite existing values with duplicates from the other file
+  overrideExisting,
+
+  /// Keep the first occurrence of a key and ignore duplicates
+  keepFirst,
+
+  /// Throw an exception if a duplicate key is found
+  throwException,
+}
+
 /// A service which merge arb files
 abstract class ARBMerger {
 
@@ -48,7 +59,7 @@ abstract class ARBMerger {
 
   /// Merge arb files.
   static void merge(
-      PackageSettings packageSettings,
+      PackageSettings packageSettings,{MergeBehavior behavior = MergeBehavior.keepFirst}
       ) {
     final _arbFiles = <File>{};
 
@@ -97,11 +108,32 @@ abstract class ARBMerger {
       }
       _arbFiles.removeWhere((arbFile) => arbFile.uri == mergedArbFile.uri);
 
-      Arb _mergedBundle = Arb();
+
+      final Set<ArbItem> items = {};
+
       for (final arbFile in _arbFiles) {
         final bundle = Arb.fromFile(arbFile);
-        _mergedBundle = bundle.merge(_mergedBundle);
+        switch (behavior) {
+          case MergeBehavior.overrideExisting:
+            items.addAll(bundle.items);
+            break;
+          case MergeBehavior.keepFirst:
+            final existingKeys = items.map((item) => item.name).toSet();
+            items.addAll(
+              bundle.items.where((item) => !existingKeys.contains(item.name)),
+            );
+            break;
+          case MergeBehavior.throwException:
+            final duplicates =
+            bundle.items.where((item) => items.any((existing) => existing.name == item.name)).toList();
+            if (duplicates.isNotEmpty) {
+              throw Exception('Found duplicate keys during merge: ${duplicates.map((item) => item.name).join(', ')}');
+            }
+            items.addAll(bundle.items);
+            break;
+        }
       }
+      final Arb _mergedBundle = Arb(items: items);
 
       var encoder = new JsonEncoder.withIndent("  ");
       String _convertedJson = encoder.convert(_mergedBundle.arb);
